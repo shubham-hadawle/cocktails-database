@@ -8,7 +8,7 @@ A full-stack cocktail database web app built with **React + Vite** (frontend), *
 Cocktails-Database/
 ├── docker-compose.yml
 ├── SQL queries/
-│   ├── cocktail_db_create_commands.sql      # DDL — creates 13 tables
+│   ├── cocktail_db_create_commands.sql      # DDL — creates 12 tables
 │   └── cocktail_db_data_population_commands.sql  # DML — seeds all data
 ├── backend/
 │   ├── .env                                 # MySQL connection string (you create this)
@@ -38,13 +38,71 @@ Cocktails-Database/
 
 ---
 
+## Quick Start (Docker + Local App)
+
+Use this path if you want the fastest setup (with Docker already installed).
+
+1. Start database from project root:
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+2. Start backend in a new terminal:
+
+```bash
+cd backend
+python -m venv .venv
+# Windows PowerShell
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+3. Start frontend in a new terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+4. Open:
+
+- Frontend: `http://localhost:3000`
+- API docs: `http://localhost:8000/docs`
+
+Quick backend check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+If `/health` returns `500`, run `pip install -r requirements.txt` again inside `backend`, then verify `backend/.env` points to the correct MySQL host/port and password.
+
+---
+
+## After Reboot (Fast Restart)
+
+```bash
+docker compose up -d
+cd backend && .venv\Scripts\activate && uvicorn app.main:app --reload
+cd frontend && npm run dev
+```
+
+---
+
 ## Prerequisites
 
 Make sure you have these installed before starting:
 
 - **Python 3.10+** → [python.org/downloads](https://www.python.org/downloads/)
 - **Node.js 18+** → [nodejs.org](https://nodejs.org/)
-- **MySQL 8.0** → [dev.mysql.com/downloads/installer](https://dev.mysql.com/downloads/installer/) (install MySQL Server + MySQL Workbench)
+
+- **Docker Desktop** → [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) (recommended)
+
+- **MySQL 8.0** (if not using Docker) → [dev.mysql.com/downloads/installer](https://dev.mysql.com/downloads/installer/)
 
 To verify they're installed, run in your terminal:
 
@@ -52,12 +110,13 @@ To verify they're installed, run in your terminal:
 python --version
 node --version
 npm --version
-mysql --version
+docker --version
+docker compose version
 ```
 
 ---
 
-## Step 1 — Set Up the MySQL Database
+## (Not using Docker) Step 1 — Set Up the MySQL Database
 
 ### Option A — Using MySQL Workbench (recommended for Windows)
 
@@ -80,23 +139,7 @@ SHOW TABLES;
 SELECT COUNT(*) FROM cocktail;
 ```
 
-You should see **13 tables** and a count of **7** cocktails.
-
-### Option B — Using Docker Desktop
-
-```bash
-docker compose up -d
-```
-
-This starts MySQL 8.0 on port 3306 and auto-runs the SQL files from `SQL queries/`.
-
-Verify with:
-
-```bash
-docker exec -it mixmaster-mysql mysql -uroot -proot -e "USE cocktail_db; SHOW TABLES;"
-```
-
----
+You should see **12 tables** and a count of **7** cocktails.
 
 ## Step 2 — Create the Backend `.env` File
 
@@ -120,8 +163,6 @@ cd backend
 > ```
 > DATABASE_URL=mysql+pymysql://root:MyPass123@localhost:3306/cocktail_db
 > ```
-> If you used Docker (Option B above), the password is `root`.
-
 ---
 
 ## Step 3 — Start the FastAPI Backend
@@ -149,10 +190,7 @@ Install dependencies (first time only):
 
 ```bash
 pip install -r requirements.txt
-pip install cryptography
 ```
-
-> The `cryptography` package is required because MySQL 8 uses `caching_sha2_password` authentication.
 
 Start the server:
 
@@ -239,15 +277,15 @@ Look below the "Discover Your Next Cocktail" heading — you'll see a small stat
 | `GET`    | `/api/cocktails?q=mojito`             | Search cocktails by name/ingredient  |
 | `GET`    | `/api/cocktails/{id}`                 | Get single cocktail by ID            |
 | `GET`    | `/api/analytics/summary`              | Aggregate stats                      |
+| `POST`   | `/api/reviews`                        | Submit a new review                  |
+| `PUT`    | `/api/reviews/{review_id}`            | Edit a review                        |
+| `DELETE` | `/api/reviews/{review_id}`            | Delete a review                      |
 | `POST`   | `/api/auth/login`                     | User login                           |
 | `POST`   | `/api/auth/register`                  | User registration                    |
-| `GET`    | `/api/users`                          | List all users                       |
-| `POST`   | `/api/reviews`                        | Submit a new review                  |
-| `PUT`    | `/api/reviews/{id}`                   | Edit a review                        |
-| `DELETE` | `/api/reviews/{id}`                   | Delete a review                      |
 | `GET`    | `/api/favorites/{user_id}`            | Get user's favorites                 |
 | `POST`   | `/api/favorites`                      | Add to favorites                     |
 | `DELETE` | `/api/favorites/{user_id}/{cocktail_id}` | Remove from favorites             |
+| `GET`    | `/api/users`                          | List all users                       |
 
 ---
 
@@ -267,9 +305,9 @@ Look below the "Discover Your Next Cocktail" heading — you'll see a small stat
 
 ## Database Schema
 
-The database contains **13 tables** across 4 domains:
+The database contains **12 tables** across 4 domains:
 
-- **Cocktail data:** `recipe`, `cocktail`, `glass_type`, `flavor`, `cocktail_flavor`, `recipe_tool`, `recipe_ingredient`
+- **Cocktail data:** `cocktail`, `glass_type`, `flavor`, `cocktail_flavor`, `cocktail_tool`, `cocktail_ingredient`
 - **Ingredients:** `ingredient`, `ingredient_type`
 - **Bar tools:** `tool`
 - **Users:** `app_user`, `review`, `user_favorite`

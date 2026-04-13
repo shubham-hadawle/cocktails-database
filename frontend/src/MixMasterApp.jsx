@@ -748,10 +748,6 @@ export default function MixMasterApp() {
             <div style={{ textAlign: "center", padding: "48px 0 36px" }}>
               <h2 style={{ fontSize: 46, fontWeight: 800, margin: "0 0 14px", fontFamily: "'Playfair Display', serif", background: `linear-gradient(135deg, ${NEON.gold1} 0%, ${NEON.gold2} 20%, ${NEON.gold3} 40%, ${NEON.gold4} 60%, ${NEON.gold5} 80%, ${NEON.gold2} 100%)`, backgroundSize: "300% 100%", animation: "shimmer 5s ease infinite", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", filter: "drop-shadow(0 0 8px rgba(191,149,63,0.25))" }}>Discover Your Next Cocktail</h2>
               <p style={{ fontSize: 16, background: `linear-gradient(90deg, ${NEON.gold1}, ${NEON.gold2}, ${NEON.gold3}, ${NEON.gold4})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", maxWidth: 520, margin: "0 auto", filter: "drop-shadow(0 0 4px rgba(191,149,63,0.15))" }}>From timeless classics to adventurous new mixes — search, sip, and savor.</p>
-              <div style={{ marginTop: 14, display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 12px", borderRadius: 999, fontSize: 12, background: dataSource === "api" ? `${NEON.cyan}12` : `${NEON.amber}12`, color: dataSource === "api" ? NEON.cyan : NEON.amber, border: `1px solid ${dataSource === "api" ? NEON.cyan + "30" : NEON.amber + "30"}` }}>
-                <span>{dataSource === "api" ? "🟢" : "🟡"}</span>
-                {dataSource === "api" ? "Connected to localhost FastAPI + MySQL" : "Demo mode until backend is running"}
-              </div>
             </div>
             <div style={{ maxWidth: 620, margin: "0 auto 24px", position: "relative" }}>
               <Search size={18} style={{ position: "absolute", left: 18, top: "50%", transform: "translateY(-50%)", color: NEON.textMuted }} />
