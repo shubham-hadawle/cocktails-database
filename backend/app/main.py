@@ -75,12 +75,14 @@ def _load_cocktails() -> list[dict[str, Any]]:
                         c.cocktail_name,
                         c.cocktail_description,
                         c.cocktail_image_url,
-                        c.instructions,
-                        c.difficulty,
+                        r.recipe_id,
+                        r.instructions,
+                        r.difficulty,
                         g.glass_type_id,
                         g.glass_type_name,
                         g.glass_type_description
                     FROM cocktail AS c
+                    JOIN recipe AS r ON r.recipe_id = c.recipe_id
                     JOIN glass_type AS g ON g.glass_type_id = c.glass_type_id
                     ORDER BY c.cocktail_name
                     '''
@@ -104,8 +106,8 @@ def _load_cocktails() -> list[dict[str, Any]]:
                     '''
                     SELECT c.cocktail_id, t.tool_id, t.tool_name, t.tool_description
                     FROM cocktail AS c
-                    JOIN cocktail_tool AS ct ON ct.cocktail_id = c.cocktail_id
-                    JOIN tool AS t ON t.tool_id = ct.tool_id
+                    JOIN recipe_tool AS rt ON rt.recipe_id = c.recipe_id
+                    JOIN tool AS t ON t.tool_id = rt.tool_id
                     '''
                 )
             )
@@ -119,11 +121,11 @@ def _load_cocktails() -> list[dict[str, Any]]:
                         i.ingredient_id,
                         i.ingredient_name AS name,
                         it.ingred_type_name AS type,
-                        ci.quantity,
-                        ci.unit
+                        ri.quantity,
+                        ri.unit
                     FROM cocktail AS c
-                    JOIN cocktail_ingredient AS ci ON ci.cocktail_id = c.cocktail_id
-                    JOIN ingredient AS i ON i.ingredient_id = ci.ingredient_id
+                    JOIN recipe_ingredient AS ri ON ri.recipe_id = c.recipe_id
+                    JOIN ingredient AS i ON i.ingredient_id = ri.ingredient_id
                     JOIN ingredient_type AS it ON it.ingred_type_id = i.ingred_type_id
                     '''
                 )
@@ -181,9 +183,14 @@ def _load_cocktails() -> list[dict[str, Any]]:
     payload = []
     for cocktail in cocktails:
         cocktail_reviews = review_map[cocktail['cocktail_id']]
-        avg_rating = None
-        if cocktail_reviews:
-            avg_rating = round(sum(r['rating'] for r in cocktail_reviews) / len(cocktail_reviews), 2)
+
+        # Use MySQL stored function for average rating
+        with engine.begin() as fn_conn:
+            avg_result = fn_conn.execute(
+                text('SELECT fn_avg_rating(:cid) AS avg_rating'),
+                {'cid': cocktail['cocktail_id']}
+            ).fetchone()
+            avg_rating = float(avg_result._mapping['avg_rating']) if avg_result._mapping['avg_rating'] is not None else None
 
         payload.append(
             {
@@ -192,7 +199,7 @@ def _load_cocktails() -> list[dict[str, Any]]:
                 'cocktail_description': cocktail['cocktail_description'],
                 'image': cocktail['cocktail_image_url'],
                 'recipe': {
-                    'recipe_id': cocktail['cocktail_id'],
+                    'recipe_id': cocktail['recipe_id'],
                     'instructions': cocktail['instructions'],
                     'difficulty': cocktail['difficulty'],
                 },
@@ -251,63 +258,64 @@ def get_cocktail(cocktail_id: int) -> dict[str, Any]:
 
 @app.get('/api/analytics/summary')
 def get_summary() -> dict[str, Any]:
-    cocktails = _load_cocktails()
-    avg_rating_values = [c['avgRating'] for c in cocktails if c['avgRating'] is not None]
+    """Analytics summary using stored functions fn_avg_rating and fn_cocktail_review_count."""
+    with engine.begin() as conn:
+        # Use the stored procedure for per-cocktail stats
+        rows = _rows_to_dicts(
+            conn.execute(text('CALL sp_get_cocktail_stats()'))
+        )
+        cocktail_count = len(rows)
+        review_count = sum(r['review_count'] for r in rows)
+        rated = [float(r['avg_rating']) for r in rows if r['avg_rating'] is not None]
+        average_rating = round(sum(rated) / len(rated), 2) if rated else None
+
     return {
-        'cocktail_count': len(cocktails),
-        'review_count': sum(len(c['reviews']) for c in cocktails),
-        'average_rating': round(sum(avg_rating_values) / len(avg_rating_values), 2) if avg_rating_values else None,
+        'cocktail_count': cocktail_count,
+        'review_count': review_count,
+        'average_rating': average_rating,
+        'per_cocktail': rows,
     }
+
+
+@app.get('/api/analytics/cocktail-stats')
+def get_cocktail_stats() -> list[dict[str, Any]]:
+    """Per-cocktail stats using stored procedure sp_get_cocktail_stats."""
+    with engine.begin() as conn:
+        rows = _rows_to_dicts(
+            conn.execute(text('CALL sp_get_cocktail_stats()'))
+        )
+    for row in rows:
+        if row['avg_rating'] is not None:
+            row['avg_rating'] = float(row['avg_rating'])
+    return rows
+
+
+@app.get('/api/analytics/user/{user_id}/favorite-count')
+def get_user_favorite_count(user_id: int) -> dict[str, Any]:
+    """Returns favorite count using stored function fn_user_favorite_count."""
+    with engine.begin() as conn:
+        result = conn.execute(
+            text('SELECT fn_user_favorite_count(:uid) AS favorite_count'),
+            {'uid': user_id}
+        ).fetchone()
+    return {'user_id': user_id, 'favorite_count': result._mapping['favorite_count']}
 
 
 # ── Reviews (CRUD) ───────────────────────────────────────────
 
 @app.post('/api/reviews')
 def create_review(review: ReviewRequest) -> dict[str, Any]:
-    """Create — submit a new review for a cocktail."""
+    """Create — submit a new review using stored procedure sp_submit_review."""
     try:
         with engine.begin() as conn:
             result = conn.execute(
-                text('SELECT cocktail_id FROM cocktail WHERE cocktail_id = :cid'),
-                {'cid': review.cocktail_id}
-            ).fetchone()
-            if not result:
-                raise HTTPException(status_code=404, detail='Cocktail not found')
-
-            result = conn.execute(
-                text('SELECT user_id FROM app_user WHERE user_id = :uid'),
-                {'uid': review.user_id}
-            ).fetchone()
-            if not result:
-                raise HTTPException(status_code=404, detail='User not found')
-
-            existing = conn.execute(
-                text('''SELECT review_id FROM review
-                       WHERE cocktail_id = :cid AND user_id = :uid'''),
-                {'cid': review.cocktail_id, 'uid': review.user_id}
-            ).fetchone()
-            if existing:
-                raise HTTPException(status_code=400, detail='You have already reviewed this cocktail')
-
-            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            conn.execute(
-                text('''INSERT INTO review (cocktail_id, user_id, rating, review_text, created_at)
-                       VALUES (:cid, :uid, :rating, :text, :date)'''),
+                text('CALL sp_submit_review(:cid, :uid, :rating, :text)'),
                 {
                     'cid': review.cocktail_id,
                     'uid': review.user_id,
                     'rating': review.rating,
                     'text': review.review_text,
-                    'date': current_date,
                 }
-            )
-
-            result = conn.execute(
-                text('''SELECT review_id, cocktail_id, user_id, rating, review_text, created_at
-                       FROM review
-                       WHERE cocktail_id = :cid AND user_id = :uid
-                       ORDER BY created_at DESC LIMIT 1'''),
-                {'cid': review.cocktail_id, 'uid': review.user_id}
             ).fetchone()
 
             if result:
@@ -319,42 +327,39 @@ def create_review(review: ReviewRequest) -> dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        msg = str(e)
+        # Extract the SIGNAL message from MySQL stored procedure errors
+        if '45000' in msg:
+            # Parse out the readable message from the SQLSTATE error
+            detail = msg.split("'")[-2] if "'" in msg else msg
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=500, detail=msg)
 
 
 @app.put('/api/reviews/{review_id}')
 def update_review(review_id: int, update: ReviewUpdate) -> dict[str, Any]:
-    """Update — edit an existing review."""
+    """Update — edit an existing review using stored procedure sp_update_review."""
     try:
         with engine.begin() as conn:
             result = conn.execute(
-                text('SELECT review_id FROM review WHERE review_id = :rid'),
-                {'rid': review_id}
-            ).fetchone()
-            if not result:
-                raise HTTPException(status_code=404, detail='Review not found')
-
-            conn.execute(
-                text('''UPDATE review
-                       SET rating = :rating, review_text = :text
-                       WHERE review_id = :rid'''),
+                text('CALL sp_update_review(:rid, :rating, :text)'),
                 {'rid': review_id, 'rating': update.rating, 'text': update.review_text}
-            )
-
-            result = conn.execute(
-                text('''SELECT review_id, cocktail_id, user_id, rating, review_text, created_at
-                       FROM review WHERE review_id = :rid'''),
-                {'rid': review_id}
             ).fetchone()
 
-            row = dict(result._mapping)
-            row['rating'] = float(row['rating'])
-            row['created_at'] = str(row['created_at'])
-            return row
+            if result:
+                row = dict(result._mapping)
+                row['rating'] = float(row['rating'])
+                row['created_at'] = str(row['created_at'])
+                return row
+            raise HTTPException(status_code=404, detail='Review not found')
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        msg = str(e)
+        if '45000' in msg:
+            detail = msg.split("'")[-2] if "'" in msg else msg
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=500, detail=msg)
 
 
 @app.delete('/api/reviews/{review_id}')
@@ -403,36 +408,27 @@ def login(req: LoginRequest) -> dict[str, Any]:
 
 @app.post('/api/auth/register')
 def register(req: RegisterRequest) -> dict[str, Any]:
-    """Create a new user account."""
+    """Create a new user account using stored procedure sp_register_user."""
     try:
         with engine.begin() as conn:
-            existing = conn.execute(
-                text('''SELECT user_id FROM app_user
-                       WHERE username = :u OR email = :e'''),
-                {'u': req.username, 'e': req.email}
-            ).fetchone()
-            if existing:
-                raise HTTPException(status_code=400, detail='Username or email already taken')
-
-            conn.execute(
-                text('''INSERT INTO app_user (username, email, password_hash)
-                       VALUES (:u, :e, :p)'''),
-                {'u': req.username, 'e': req.email, 'p': req.password}
-            )
-
             result = conn.execute(
-                text('''SELECT user_id, username, email, password_hash, created_at
-                       FROM app_user WHERE username = :u'''),
-                {'u': req.username}
+                text('CALL sp_register_user(:u, :e, :p)'),
+                {'u': req.username, 'e': req.email, 'p': req.password}
             ).fetchone()
 
-            row = dict(result._mapping)
-            row['created_at'] = str(row['created_at'])
-            return row
+            if result:
+                row = dict(result._mapping)
+                row['created_at'] = str(row['created_at'])
+                return row
+            raise HTTPException(status_code=400, detail='Failed to create user')
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        msg = str(e)
+        if '45000' in msg:
+            detail = msg.split("'")[-2] if "'" in msg else msg
+            raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=500, detail=msg)
 
 
 # ── Favorites (CRUD) ────────────────────────────────────────
